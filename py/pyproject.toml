@@ -1,0 +1,44 @@
+[project]
+name = "verity-app-template"
+version = "0.0.0"
+description = "Reference implementation of the Verity app lifecycle contract over the dStack guest agent."
+license = { text = "AGPL-3.0-only" }
+requires-python = ">=3.11"
+dependencies = [
+  # `eth-account` brings keccak, EIP-712 encoding and signature recovery. Chosen over hand-rolling
+  # any of them: this template is copied into apps nobody can patch, and a subtly wrong keccak or a
+  # missing malleability check would ship into every one of them.
+  "eth-account>=0.13.0",
+  "eth-utils>=5.0.0",
+  "web3>=7.0.0",
+  # X25519 and AES-GCM for the export bundle.
+  "cryptography>=43.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "mypy>=1.11.0", "ruff>=0.6.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["verity_app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+# `ruff format` already enforces line width on code. E501 additionally polices prose in docstrings
+# and comments, where mechanical wrapping mangles sentences without making anything more readable —
+# and the documentation here is load-bearing, since apps built from this template cannot be patched.
+ignore = ["E501"]

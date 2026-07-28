@@ -1,0 +1,75 @@
+{
+  "description": "Cross-language parity vectors. TypeScript and Python must reproduce every value here exactly.",
+  "source": "Emitted from the TypeScript implementation by ts/scripts/emit-vectors.ts, then both sides are tested against this file so neither becomes the other’s oracle. The EIP-712 digests are the authority: a signature is verified against them, so a language computing a different digest silently rejects every genuine holder signature.",
+  "why": "The two implementations teach the same contract or they teach two. Drift here does not fail loudly — it produces an app that refuses its own holder, three layers from the cause.",
+  "eip712": {
+    "domain": {
+      "name": "Verity App Lifecycle",
+      "version": "1",
+      "chainId": 84532,
+      "verifyingContract": "0x1111111111111111111111111111111111111111"
+    },
+    "migration": {
+      "message": {
+        "licenseId": "42",
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": "7",
+        "expiry": "4000000000"
+      },
+      "digest": "0x7fa4622cd4df94d454fb1402e23a147e98946542df464465b50c1ce5ee1c5c55"
+    },
+    "export": {
+      "message": {
+        "licenseId": "42",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "recipientPublicKey": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nonce": "7",
+        "expiry": "4000000000"
+      },
+      "digest": "0xae1b0b88ad57dedab621c75ed69207a41f4b90f5aadc0c776576d794a14840c8"
+    }
+  },
+  "fingerprints": [
+    {
+      "domain": "derived-key",
+      "secret": "hunter2",
+      "value": "418e0801ddfc3acd"
+    },
+    {
+      "domain": "migration-nonce",
+      "secret": "hunter2",
+      "value": "e0dbafc1437d209d"
+    },
+    {
+      "domain": "export-key",
+      "secret": "",
+      "value": "8bbc925b242a5641"
+    }
+  ],
+  "seal": {
+    "note": "A bundle sealed by the TypeScript implementation. Python must open it and recover plaintext exactly — that is what proves the two constructions are the same one, rather than two that merely both work.",
+    "recipientPrivateKeyHex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+    "recipientPublicKeyHex": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    "context": {
+      "licenseId": "42",
+      "instanceId": "0x00000000000000000000000000000000000000ff"
+    },
+    "plaintext": "the holder’s data, sealed in the enclave",
+    "bundle": {
+      "version": "verity-export-v1",
+      "ephemeralPublicKey": "9ef0d0843fb895bc89d9b22ae5b6c93a1b5bd31520400b464c47e13e37c03716",
+      "iv": "b7e3553f5d60178d10532b2f",
+      "ciphertext": "TXuixMi51g3FzEtRo7V6ghrYIcjMKwUZOkHiAxq/fSVojCf9rAM2LanA",
+      "tag": "749de05032284da39abf1479d427c221"
+    }
+  },
+  "tokenIds": [
+    {
+      "appManifest": "0x1111111111111111111111111111111111111111",
+      "version": "1.0.0",
+      "tokenId": "0x75b0a7c5fb3715c9c71eaa6f7900b8caf8b78df1f5699f7a42838734e63b3b35"
+    }
+  ]
+}

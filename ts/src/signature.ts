@@ -27,7 +27,13 @@
 
 import {recoverTypedDataAddress, type Address, type Hex, type PublicClient} from 'viem';
 
-import {MIGRATION_AUTHORIZATION_TYPES, migrationDomain, type MigrationAuthorization} from './authorization.ts';
+import {
+  EXPORT_AUTHORIZATION_TYPES,
+  MIGRATION_AUTHORIZATION_TYPES,
+  migrationDomain,
+  type ExportAuthorization,
+  type MigrationAuthorization,
+} from './authorization.ts';
 
 /** The signer is a contract account, which this version cannot verify. */
 export class SmartAccountNotSupportedError extends Error {
@@ -97,6 +103,44 @@ export async function verifyMigrationSignature(options: {
     domain: migrationDomain(chainId, licenseToken),
     types: MIGRATION_AUTHORIZATION_TYPES,
     primaryType: 'MigrationAuthorization',
+    message: authorization,
+    signature,
+  });
+
+  if (recovered.toLowerCase() !== signer.toLowerCase()) {
+    throw new SignerMismatchError(signer, recovered);
+  }
+}
+
+/**
+ * Verify a signature over an *export* authorization.
+ *
+ * Separate from `verifyMigrationSignature` and using a different primary type, so a signature for
+ * one operation cannot be presented for the other. Two operations, two types — the alternative is
+ * how `LicenseToken.mint` and `upgrade` came to share a struct, which made every check in one of
+ * them decorative.
+ *
+ * @throws {SmartAccountNotSupportedError} the signer is a contract account
+ * @throws {SignerMismatchError} the signature is valid but for a different account
+ */
+export async function verifyExportSignature(options: {
+  readonly client: PublicClient;
+  readonly signer: Address;
+  readonly authorization: ExportAuthorization;
+  readonly chainId: number;
+  readonly licenseToken: Address;
+  readonly signature: Hex;
+}): Promise<void> {
+  const {client, signer, authorization, chainId, licenseToken, signature} = options;
+
+  if (await isContractAccount(client, signer)) {
+    throw new SmartAccountNotSupportedError(signer);
+  }
+
+  const recovered = await recoverTypedDataAddress({
+    domain: migrationDomain(chainId, licenseToken),
+    types: EXPORT_AUTHORIZATION_TYPES,
+    primaryType: 'ExportAuthorization',
     message: authorization,
     signature,
   });

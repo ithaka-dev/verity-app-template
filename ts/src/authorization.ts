@@ -65,6 +65,69 @@ export interface MigrationAuthorization {
 }
 
 /**
+ * A holder's authorization to export their own data.
+ *
+ * @dev Same mechanism as the migration authorization, and deliberately a **different struct** —
+ * `MigrationAuthorization` and this one must not be interchangeable. That lesson was learned
+ * expensively one repo over: `LicenseToken.mint` and `upgrade` shared a signed struct, which made
+ * every check in `upgrade` decorative because an authorization for one could be spent on the other.
+ * Two operations, two types, two typehashes.
+ *
+ * `recipientPublicKey` is in the signature because it decides *who can read the result*. Left out,
+ * a relayer could substitute their own key and receive a bundle the holder authorized — the export
+ * would be genuinely authorized and delivered to the wrong person.
+ */
+export const EXPORT_AUTHORIZATION_TYPES = {
+  ExportAuthorization: [
+    {name: 'licenseId', type: 'uint256'},
+    {name: 'instanceId', type: 'bytes32'},
+    {name: 'recipientPublicKey', type: 'bytes32'},
+    {name: 'nonce', type: 'uint256'},
+    {name: 'expiry', type: 'uint256'},
+  ],
+} as const;
+
+export interface ExportAuthorization {
+  readonly licenseId: bigint;
+  readonly instanceId: Hex;
+  /** X25519 public key the bundle will be sealed to. 32 bytes. */
+  readonly recipientPublicKey: Hex;
+  readonly nonce: bigint;
+  readonly expiry: bigint;
+}
+
+/** The digest a holder signs to authorize an export. */
+export function hashExportAuthorization(
+  authorization: ExportAuthorization,
+  chainId: number,
+  licenseToken: Address,
+): Hex {
+  return hashTypedData({
+    domain: migrationDomain(chainId, licenseToken),
+    types: EXPORT_AUTHORIZATION_TYPES,
+    primaryType: 'ExportAuthorization',
+    message: authorization,
+  });
+}
+
+/**
+ * Check an export authorization describes this instance, right now.
+ *
+ * @throws {AuthorizationExpiredError} past its expiry
+ * @throws {AuthorizationMismatchError} for a different instance
+ */
+export function assertExportAuthorizationMatches(
+  authorization: ExportAuthorization,
+  expectedInstanceId: Hex,
+  now: bigint,
+): void {
+  if (now > authorization.expiry) {
+    throw new AuthorizationExpiredError(authorization.expiry, now);
+  }
+  assertFieldEquals('instanceId', expectedInstanceId, authorization.instanceId);
+}
+
+/**
  * The EIP-712 domain.
  *
  * `chainId` prevents cross-chain replay. `verifyingContract` is the `LicenseToken` this app's
