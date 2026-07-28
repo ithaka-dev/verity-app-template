@@ -96,9 +96,17 @@ class JsonStore:
             # data.
             raise StoreError(f"state at {path} is not valid JSON ({err})") from err
 
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("schemaVersion"), int):
+        if not isinstance(parsed, dict):
+            raise StoreError(f"state at {path} is not a JSON object")
+        version = parsed.get("schemaVersion")
+        # `isinstance(True, int)` is True in Python, so a bare `bool` passed as a schema version and
+        # migration ran from `True`. Integral floats are accepted because TypeScript writes JSON
+        # numbers and is the writer this must interoperate with.
+        if isinstance(version, bool) or not isinstance(version, (int, float)):
             raise StoreError(f"state at {path} has no numeric schemaVersion")
-        return VersionedDocument(schema_version=parsed["schemaVersion"], data=parsed.get("data"))
+        if isinstance(version, float) and not version.is_integer():
+            raise StoreError(f"state at {path} has a non-integral schemaVersion")
+        return VersionedDocument(schema_version=int(version), data=parsed.get("data"))
 
     def write(self, name: str, document: VersionedDocument) -> None:
         """Write atomically: temp file, then rename.
@@ -125,13 +133,24 @@ def split_name(data: Any) -> dict[str, Any]:
     Without that check, a second application reads ``name`` as missing and overwrites good data with
     empty strings — the exact damage a retry is supposed to be harmless.
     """
-    profiles = (data or {}).get("profiles", [])
+    if data is None or not isinstance(data, dict):
+        # Silently rewriting unrecognised state is exactly the state loss this module is about.
+        raise ValueError(f"expected a profiles document, got {type(data).__name__}")
+    profiles = data.get("profiles", [])
     migrated = []
     for profile in profiles:
         if isinstance(profile.get("givenName"), str):
             migrated.append(profile)
             continue
-        parts = str(profile.get("name", "")).strip().split()
+        name = profile.get("name", "")
+        # Refuse, do not guess. `str(None)` wrote the literal "None" into the holder's record, and
+        # the idempotency check below then locked that in permanently — there is no down migration.
+        if not isinstance(name, str):
+            raise ValueError(
+                f"profile {profile.get('id')!r} has a non-string `name` ({type(name).__name__}); "
+                "refusing to transform data whose shape is not what this migration expects"
+            )
+        parts = name.strip().split()
         migrated.append(
             {
                 "id": profile.get("id"),
@@ -232,7 +251,21 @@ def record_attempt(store: JsonStore, nonce: int, from_digest: str, to_digest: st
     store.write(JOURNAL_DOCUMENT, VersionedDocument(1, journal))
 
 
+_TERMINAL_STATUSES: Final = frozenset({"complete", "failed"})
+
+
 def record_outcome(store: JsonStore, nonce: int, status: str) -> None:
+    """Record a terminal outcome.
+
+    The status is validated against a closed set because its only consumer is an equality test
+    against ``"complete"``. A typo such as ``"completed"`` does not fail — it silently disables the
+    replay short-circuit, so the migration re-runs on every retry. TypeScript catches this at
+    compile time via ``Exclude<JournalStatus, 'in_flight'>``; Python has to check.
+    """
+    if status not in _TERMINAL_STATUSES:
+        raise ValueError(
+            f"{status!r} is not a terminal journal status {sorted(_TERMINAL_STATUSES)}"
+        )
     journal = read_journal(store)
     entry = journal.get(str(nonce))
     if entry is None:

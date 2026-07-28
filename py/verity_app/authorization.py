@@ -129,10 +129,38 @@ class AuthorizationMismatchError(Exception):
 
 
 def _to_bytes32(value: str) -> bytes:
+    """Parse a canonical 32-byte hex value.
+
+    **Exactly 32 bytes, never padded.** An earlier version left-padded, which made ``0xcd`` and
+    ``0x00...cd`` the same value in Python and two different ones in TypeScript — viem rejects the
+    short form outright. Two encodings of "the same" authorization producing two different EIP-712
+    digests is a signature that verifies in one language and not the other.
+    """
+    raw = value[2:] if value.startswith("0x") else value
+    if len(raw) != 64:
+        raise ValueError(
+            f"expected a 32-byte hex value, got {len(raw)} hex characters ({value!r}). "
+            "Canonicalise at the boundary with `pad_to_bytes32`, not here."
+        )
+    try:
+        return bytes.fromhex(raw)
+    except ValueError as err:
+        raise ValueError(f"{value!r} is not hexadecimal") from err
+
+
+def pad_to_bytes32(value: str) -> str:
+    """Canonicalise a platform-supplied identifier into the form the holder signs.
+
+    Mirrors ``toBytes32`` in ``ts/src/handlers/migrate.ts``: a **boundary** normaliser for
+    guest-agent output, never applied to a signed struct. dStack reports ``instance_id`` as bare
+    20-byte hex, and the value in the authorization is the padded ``bytes32``.
+    """
     raw = value[2:] if value.startswith("0x") else value
     if len(raw) > 64:
-        raise ValueError(f"{value} does not fit in bytes32")
-    return bytes.fromhex(raw.rjust(64, "0"))
+        raise ValueError(f"{value!r} does not fit in bytes32")
+    if raw and not all(c in "0123456789abcdefABCDEF" for c in raw):
+        raise ValueError(f"{value!r} is not hexadecimal")
+    return "0x" + raw.rjust(64, "0").lower()
 
 
 def domain(chain_id: int, license_token: str) -> dict[str, Any]:
@@ -171,7 +199,8 @@ def _hash_typed(
     )
     # `signable.body` is the struct hash and `signable.header` the domain separator; the digest is
     # keccak over the 0x1901 prefix and both, which is what a wallet signs.
-    return keccak(b"\x19\x01" + signable.header + signable.body)
+    digest: bytes = keccak(b"\x19\x01" + signable.header + signable.body)
+    return digest
 
 
 def hash_migration_authorization(
@@ -243,6 +272,16 @@ def assert_export_authorization_matches(
 
 
 def _assert_equal(field: str, expected: str, actual: str) -> None:
-    # Compared as bytes32 so `0xff` and `0x00…ff` are the same value, and case never matters.
-    if _to_bytes32(expected) != _to_bytes32(actual):
+    """Compare canonical hex strings, case-insensitively — and refuse an empty expected value.
+
+    An earlier version normalised **both** sides through a padding parser, which turned a missing
+    platform value into a pass: with ``expected == ""`` and an authorization naming ``0x00...00``,
+    the check succeeded. TypeScript rejects that, and its ``migrate`` handler has a second guard
+    naming the failure — *"the check would degrade to 'the message agrees with itself', which
+    passes for any authorization at all."* Python had neither, and documented the normalisation as
+    deliberate, which guaranteed no reviewer would question it.
+    """
+    if not expected:
+        raise AuthorizationMismatchError(field, "<missing>", actual)
+    if expected.strip().lower() != actual.strip().lower():
         raise AuthorizationMismatchError(field, expected, actual)

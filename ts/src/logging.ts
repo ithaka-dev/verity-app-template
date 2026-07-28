@@ -50,7 +50,22 @@ export type FingerprintDomain =
  * different keys is not a thing that happens, and short enough to read in a log line — the full
  * digest would be treated as noise and skipped, which is its own kind of failure.
  */
+const DOMAINS: ReadonlySet<string> = new Set<FingerprintDomain>([
+  'derived-key',
+  'holder-signature',
+  'migration-nonce',
+  'export-key',
+  'instance-secret',
+]);
+
 export function fingerprint(domain: FingerprintDomain, secret: string | Uint8Array): string {
+  // Checked at runtime, not only in the type system. Without this a caller reaching the function
+  // from untyped code could pass `'derived-key|x'` and collide with `fingerprint('derived-key',
+  // 'x|y')` — which is exactly the separation the separator is supposed to provide. The comment
+  // below claimed no such pair existed; it was true of the type and false of the runtime.
+  if (!DOMAINS.has(domain)) {
+    throw new TypeError(`unknown fingerprint domain ${domain}; domains are a closed set`);
+  }
   const hash = createHash('sha256');
   // The separator cannot appear in a domain because domains are a closed set, so there is no
   // (domain, secret) pair that hashes the same as a different (domain, secret) pair.
@@ -81,7 +96,38 @@ const SECRET_SHAPES: ReadonlyArray<{name: string; pattern: RegExp}> = [
  * passes, `key` does not. That asymmetry is the whole mechanism — the safe spelling is one
  * character longer than the unsafe one, and the unsafe one fails in a test.
  */
-const SUSPICIOUS_FIELD = /(?:^|_)(key|secret|private|passphrase|seed|mnemonic|token)(?:$|_)/i;
+const SUSPICIOUS_WORDS: ReadonlySet<string> = new Set([
+  'key',
+  'keys',
+  'secret',
+  'private',
+  'privkey',
+  'apikey',
+  'passphrase',
+  'password',
+  'credential',
+  'credentials',
+  'seed',
+  'mnemonic',
+  'token',
+  'pem',
+  'entropy',
+]);
+
+/**
+ * Split a field name into lower-case words across `_`, `-` and camelCase boundaries.
+ *
+ * The previous version anchored on `^` or `_`, which in a camelCase codebase matched almost
+ * nothing: `privateKey`, `derivedKey`, `apiKey`, `sessionToken` and `password` all passed. Python's
+ * identical regex was safe only by accident, because `log(**fields)` pushes callers to snake_case.
+ */
+function words(field: string): string[] {
+  return field
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[\s_\-.]+/)
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length > 0);
+}
 
 /** Thrown instead of printing something that looks like a secret. */
 export class SecretInLogError extends Error {
@@ -117,7 +163,19 @@ function assertNoSecret(rendered: string): void {
 /** A field whose *name* says it carries a secret must carry a fingerprint instead. */
 function assertFieldNameIsSafe(field: string): void {
   if (field.endsWith('_fp')) return;
-  if (SUSPICIOUS_FIELD.test(field)) throw new SecretInLogError(`field named \`${field}\``);
+  if (words(field).some((word) => SUSPICIOUS_WORDS.has(word))) {
+    throw new SecretInLogError(`field named \`${field}\``);
+  }
+}
+
+/** A `_fp` field must actually carry a fingerprint, not merely be named like one. */
+function assertFingerprintShaped(field: string, value: unknown): void {
+  if (!field.endsWith('_fp')) return;
+  if (typeof value !== 'string' || !/^[0-9a-f]{16}$/.test(value)) {
+    throw new SecretInLogError(
+      `field \`${field}\` claims to be a fingerprint but is not 16 lower-case hex characters`,
+    );
+  }
 }
 
 export type LogFields = Record<string, string | number | boolean | null>;
@@ -128,12 +186,17 @@ export type LogFields = Record<string, string | number | boolean | null>;
  * Assume every line is public. It very likely is.
  */
 export function log(event: string, fields: LogFields = {}): void {
-  for (const field of Object.keys(fields)) assertFieldNameIsSafe(field);
-  const line = JSON.stringify({event, ...fields});
+  for (const [field, value] of Object.entries(fields)) {
+    assertFieldNameIsSafe(field);
+    assertFingerprintShaped(field, value);
+  }
+  // `event` last, so a caller-supplied `event` field cannot rename the event. It could before, and
+  // a log line whose name is attacker-chosen is one that hides from every filter looking for it.
+  const line = JSON.stringify({...fields, event});
   assertNoSecret(line);
   // eslint-disable-next-line no-console -- stdout is the transport; see the module docs.
   console.log(line);
 }
 
 /** Exported for tests, which need to assert that the backstop actually catches these shapes. */
-export const _internal = {assertNoSecret, assertFieldNameIsSafe, SECRET_SHAPES, SUSPICIOUS_FIELD};
+export const _internal = {assertNoSecret, assertFieldNameIsSafe, assertFingerprintShaped, words, SECRET_SHAPES, SUSPICIOUS_WORDS};

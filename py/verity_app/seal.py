@@ -30,6 +30,7 @@ different instance — the recipient's own decryption fails if the context does 
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -41,6 +42,25 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 BUNDLE_VERSION: Final = "verity-export-v1"
+
+# RFC 7748 §6.1 — points whose shared secret is degenerate. `cryptography` does not reject these.
+_SMALL_ORDER_POINTS: Final[frozenset[bytes]] = frozenset(
+    bytes.fromhex(h)
+    for h in (
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+        "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "cdeb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+        "4c9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+        "d9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    )
+)
 
 
 class SealError(Exception):
@@ -101,7 +121,19 @@ def parse_recipient_key(hex_key: str) -> X25519PublicKey:
             f"recipient public key must be 32 bytes of hex (X25519), got {len(raw)} characters"
         )
     try:
-        return X25519PublicKey.from_public_bytes(bytes.fromhex(raw))
+        key_bytes = bytes.fromhex(raw)
+    except ValueError as err:
+        raise SealError(f"recipient public key is not hexadecimal: {err}") from err
+    # `from_public_bytes` performs no point validation, so a small-order point parses cleanly and
+    # then fails inside `exchange()` with a raw ValueError — which escapes to the holder as an
+    # opaque OpenSSL string. Rejected here, where the message can say what is wrong.
+    if key_bytes in _SMALL_ORDER_POINTS:
+        raise SealError(
+            "recipient public key is a small-order X25519 point; the shared secret would be "
+            "predictable, so nothing will be sealed to it"
+        )
+    try:
+        return X25519PublicKey.from_public_bytes(key_bytes)
     except ValueError as err:
         raise SealError(f"recipient public key is not a valid X25519 key: {err}") from err
 
@@ -149,13 +181,19 @@ def open_bundle(
     if bundle.version != BUNDLE_VERSION:
         raise SealError(f"unsupported bundle version {bundle.version}")
 
-    ephemeral_public = X25519PublicKey.from_public_bytes(bytes.fromhex(bundle.ephemeral_public_key))
-    shared = recipient_private_key.exchange(ephemeral_public)
+    try:
+        ephemeral_public = X25519PublicKey.from_public_bytes(
+            bytes.fromhex(bundle.ephemeral_public_key)
+        )
+        shared = recipient_private_key.exchange(ephemeral_public)
+        iv = bytes.fromhex(bundle.iv)
+        payload = base64.b64decode(bundle.ciphertext, validate=True) + bytes.fromhex(bundle.tag)
+    except (ValueError, binascii.Error) as err:
+        # Everything a malformed bundle can raise, surfaced as one type. These strings reach a
+        # holder through `export failed: ...`, and a raw OpenSSL error tells them nothing.
+        raise SealError(f"bundle is malformed: {err}") from err
 
-    iv = bytes.fromhex(bundle.iv)
     key = _derive_key(shared, iv, context)
-
-    payload = base64.b64decode(bundle.ciphertext) + bytes.fromhex(bundle.tag)
     try:
         return AESGCM(key).decrypt(iv, payload, None)
     except InvalidTag as err:

@@ -33,6 +33,14 @@ python_version = "3.11"
 strict = true
 warn_unreachable = true
 
+# `eth_utils` and `eth_abi` re-export through `__init__` without `__all__`, so strict mode reports
+# every import from them as implicit. The symbols are real and typed; the packaging is what mypy is
+# objecting to. Scoped to those modules so a genuine missing attribute elsewhere still fails.
+[[tool.mypy.overrides]]
+module = ["eth_utils", "eth_utils.*", "eth_abi", "eth_abi.*"]
+implicit_reexport = true
+follow_imports = "skip"
+
 [tool.ruff]
 line-length = 100
 

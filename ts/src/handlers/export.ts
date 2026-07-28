@@ -28,11 +28,24 @@
  *
  * If you add a "backup" feature to an app built on this template, it is authorized per export or it
  * is not authorized.
+ *
+ * ## One signature, one export
+ *
+ * The authorization is journalled and refused on reuse, for the same reason `migrate` is. Without
+ * that, a single signature was a **standing tap on live state**: replaying it returned *current*
+ * data, not a cached copy, so the holder signed one act and issued a continuous read capability —
+ * held by the orchestrator, which spec §2.8 says must become untrusted. Bundles are sealed to the
+ * holder's key so the orchestrator cannot read them today, but it could retain every one, and a
+ * later compromise of the holder's backup key would open the whole series at once.
  */
 
 import type {Address, Hex, PublicClient} from 'viem';
 
-import {assertExportAuthorizationMatches, type ExportAuthorization} from '../authorization.ts';
+import {
+  assertExportAuthorizationMatches,
+  hashExportAuthorization,
+  type ExportAuthorization,
+} from '../authorization.ts';
 import type {AppConfig} from '../config.ts';
 import type {GuestAgent} from '../guest-agent.ts';
 import {assertCurrentHolder} from '../holder.ts';
@@ -41,6 +54,7 @@ import {parseRecipientKey, seal, type SealedBundle} from '../seal.ts';
 import {verifyExportSignature} from '../signature.ts';
 import {PROFILES_DOCUMENT} from '../state/migrations.ts';
 import type {JsonStore} from '../state/store.ts';
+import {readJournal, recordAttempt, recordOutcome} from './journal.ts';
 import {toBytes32} from './migrate.ts';
 
 export type ExportStatus = 'complete' | 'failed';
@@ -94,6 +108,7 @@ export async function exportState(
   const {authorization, signature, signer} = request;
 
   const info = await guestAgent.info();
+  const journalKey = hashExportAuthorization(authorization, config.chainId, config.licenseToken);
 
   // — 1. Does this authorization describe this instance, now? —
   try {
@@ -123,18 +138,39 @@ export async function exportState(
     return failed(`holder check failed: ${(err as Error).message}`);
   }
 
+  // — Idempotency, and more importantly non-replay. Unlike `migrate`, a repeated export is not
+  // harmless: it returns whatever the state is *now*, so honouring a replay would extend a
+  // one-time consent into a standing one.
+  const journal = await readJournal(store);
+  if (journal[journalKey] !== undefined) {
+    return failed(
+      'this export authorization has already been used; a signature authorizes one export, not ' +
+        'continuing access',
+      'replayed',
+    );
+  }
+  await recordAttempt(store, journalKey, {
+    fromDigest: authorization.recipientPublicKey,
+    toDigest: authorization.recipientPublicKey,
+  });
+
   // — 4. Read, then seal before anything leaves. —
   try {
     const recipient = parseRecipientKey(authorization.recipientPublicKey);
     const plaintext = await collectState(store);
+    // The **canonical** instance id — the value the holder signed — not the raw guest-agent
+    // string. The context is baked into the HKDF `info`, so sealing against the raw form produced
+    // a bundle whose context a holder-side tool could not reconstruct: dStack reports
+    // `instance_id` as bare 20-byte hex with no `0x`, and the signed value is the padded bytes32.
+    // The holder could not open their own export, and would discover it when they needed the data.
     const bundle = seal(plaintext, recipient, {
       licenseId: authorization.licenseId,
-      instanceId: info.instanceId,
+      instanceId: toBytes32(info.instanceId),
     });
+    await recordOutcome(store, journalKey, 'complete');
 
     log('export_complete', {
-      nonce: authorization.nonce.toString(),
-      bytes: plaintext.length,
+      authorization: journalKey,
       // The recipient key is public, but fingerprinting keeps the log line uniform and makes an
       // unexpected recipient visible as a changed value rather than a wall of hex.
       recipient_fp: fingerprint('export-key', authorization.recipientPublicKey),
@@ -142,11 +178,17 @@ export async function exportState(
 
     return {status: 'complete', detail: 'state sealed to the holder key', bundle};
   } catch (err) {
-    return failed(`export failed: ${(err as Error).message}`);
+    await recordOutcome(store, journalKey, 'failed');
+    return failed(`export failed: ${(err as Error).message}`, (err as Error).name);
   }
 }
 
-function failed(detail: string): ExportResult {
-  log('export_failed', {detail});
+/**
+ * @param detail returned to the caller
+ * @param reason a stable, log-safe label — a caught message may quote holder state or a path, and
+ *   `public_logs` defaults to true
+ */
+function failed(detail: string, reason = 'rejected'): ExportResult {
+  log('export_failed', {reason});
   return {status: 'failed', detail};
 }

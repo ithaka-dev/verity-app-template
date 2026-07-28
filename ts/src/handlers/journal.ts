@@ -32,7 +32,17 @@ export interface JournalEntry {
   readonly toDigest: Hex;
 }
 
-/** Nonce (as a decimal string, since JSON has no bigint) to entry. */
+/**
+ * Keyed by the **EIP-712 digest** of the authorization, not by its nonce.
+ *
+ * The nonce is holder-chosen and nothing defines or enforces its uniqueness. Keying on it meant a
+ * *different*, genuinely signed migration reusing a nonce short-circuited to `complete` while the
+ * transform never ran — the volume left un-migrated under code expecting the new schema, and the
+ * upgrade flow recording success. That is the silent-wrong-direction failure ADR 0008 warns about,
+ * reached through the idempotency mechanism rather than through a fresh deploy.
+ *
+ * The digest covers every field, so two entries collide only if the authorizations are identical.
+ */
 export type Journal = Record<string, JournalEntry>;
 
 export async function readJournal(store: JsonStore): Promise<Journal> {
@@ -46,22 +56,22 @@ async function writeJournal(store: JsonStore, journal: Journal): Promise<void> {
 
 export async function recordAttempt(
   store: JsonStore,
-  nonce: bigint,
+  key: Hex,
   transition: {readonly fromDigest: Hex; readonly toDigest: Hex},
 ): Promise<void> {
   const journal = await readJournal(store);
-  journal[nonce.toString()] = {status: 'in_flight', ...transition};
+  journal[key] = {status: 'in_flight', ...transition};
   await writeJournal(store, journal);
 }
 
 export async function recordOutcome(
   store: JsonStore,
-  nonce: bigint,
+  key: Hex,
   status: Exclude<JournalStatus, 'in_flight'>,
 ): Promise<void> {
   const journal = await readJournal(store);
-  const existing = journal[nonce.toString()];
+  const existing = journal[key];
   if (existing === undefined) return;
-  journal[nonce.toString()] = {...existing, status};
+  journal[key] = {...existing, status};
   await writeJournal(store, journal);
 }

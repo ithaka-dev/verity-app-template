@@ -84,9 +84,40 @@ _SECRET_SHAPES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 # The ``_fp`` suffix is the sanctioned escape, and the only one: ``key_fp`` passes, ``key`` does
 # not.
 # The safe spelling is one character longer than the unsafe one, and the unsafe one fails in a test.
-_SUSPICIOUS_FIELD: Final[re.Pattern[str]] = re.compile(
-    r"(?:^|_)(key|secret|private|passphrase|seed|mnemonic|token)(?:$|_)", re.IGNORECASE
+_SUSPICIOUS_WORDS: Final[frozenset[str]] = frozenset(
+    {
+        "key",
+        "keys",
+        "secret",
+        "private",
+        "privkey",
+        "apikey",
+        "passphrase",
+        "password",
+        "credential",
+        "credentials",
+        "seed",
+        "mnemonic",
+        "token",
+        "pem",
+        "entropy",
+    }
 )
+
+_WORD_SPLIT: Final[re.Pattern[str]] = re.compile(r"[\s_\-.]+")
+_CAMEL_BOUNDARY: Final[re.Pattern[str]] = re.compile(r"([a-z0-9])([A-Z])")
+
+
+def _words(field: str) -> list[str]:
+    """Split a field name across ``_``, ``-`` and camelCase boundaries.
+
+    The previous regex anchored on ``^`` or ``_``, so in a camelCase codebase it matched almost
+    nothing — ``privateKey``, ``apiKey`` and ``password`` all passed. Python was safe from that only
+    by accident, because ``log(**fields)`` pushes callers to snake_case; the TypeScript side, which
+    uses camelCase throughout, was not.
+    """
+    normalised = _CAMEL_BOUNDARY.sub(r"\1 \2", field)
+    return [w.lower() for w in _WORD_SPLIT.split(normalised) if w]
 
 
 def assert_no_secret(rendered: str) -> None:
@@ -108,8 +139,18 @@ def assert_field_name_is_safe(field: str) -> None:
     """A field whose *name* says it carries a secret must carry a fingerprint instead."""
     if field.endswith("_fp"):
         return
-    if _SUSPICIOUS_FIELD.search(field):
+    if any(word in _SUSPICIOUS_WORDS for word in _words(field)):
         raise SecretInLogError(f"field named `{field}`")
+
+
+def assert_fingerprint_shaped(field: str, value: object) -> None:
+    """A ``_fp`` field must actually carry a fingerprint, not merely be named like one."""
+    if not field.endswith("_fp"):
+        return
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{16}", value):
+        raise SecretInLogError(
+            f"field `{field}` claims to be a fingerprint but is not 16 lower-case hex characters"
+        )
 
 
 def log(event: str, **fields: str | int | float | bool | None) -> None:
@@ -117,8 +158,19 @@ def log(event: str, **fields: str | int | float | bool | None) -> None:
 
     Assume every line is public. It very likely is.
     """
-    for field in fields:
+    for field, value in fields.items():
         assert_field_name_is_safe(field)
-    line = json.dumps({"event": event, **fields})
+        assert_fingerprint_shaped(field, value)
+
+    # `allow_nan=False` because the default emits bare `NaN`/`Infinity`, which is not JSON and
+    # breaks the OTel/Loki pipeline this project standardises on. `ensure_ascii=False` because
+    # TypeScript emits raw UTF-8, and identical events must not render as different lines.
+    # Large integers are stringified: a uint256 emitted as a bare number is silently rounded to a
+    # float by every JavaScript consumer.
+    safe = {
+        k: (str(v) if isinstance(v, int) and not isinstance(v, bool) and abs(v) > 2**53 else v)
+        for k, v in fields.items()
+    }
+    line = json.dumps({**safe, "event": event}, allow_nan=False, ensure_ascii=False)
     assert_no_secret(line)
     print(line)

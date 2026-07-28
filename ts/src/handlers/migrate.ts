@@ -31,7 +31,11 @@
 
 import type {Address, Hex, PublicClient} from 'viem';
 
-import {assertAuthorizationMatches, type MigrationAuthorization} from '../authorization.ts';
+import {
+  assertAuthorizationMatches,
+  hashMigrationAuthorization,
+  type MigrationAuthorization,
+} from '../authorization.ts';
 import type {AppConfig} from '../config.ts';
 import type {GuestAgent} from '../guest-agent.ts';
 import {assertCurrentHolder} from '../holder.ts';
@@ -127,12 +131,14 @@ export async function migrate(
 
   // — Idempotency: has this exact authorization already been carried out? —
   //
-  // Keyed on the nonce, which the holder signed, so a retry of the same authorization is
-  // recognisable and a genuinely new request is not mistaken for one.
+  // Keyed on the full EIP-712 digest, not on the nonce. The nonce is holder-chosen and nothing
+  // enforces its uniqueness, so a nonce key let a *different* signed migration short-circuit to
+  // `complete` while the transform never ran.
+  const journalKey = hashMigrationAuthorization(authorization, config.chainId, config.licenseToken);
   const journal = await readJournal(store);
-  const previous = journal[authorization.nonce.toString()];
+  const previous = journal[journalKey];
   if (previous?.status === 'complete') {
-    log('migrate_replay', {nonce: authorization.nonce.toString()});
+    log('migrate_replay', {authorization: journalKey});
     return {
       status: 'complete',
       detail: 'already migrated under this authorization',
@@ -143,7 +149,7 @@ export async function migrate(
   // Recorded *before* the transform, so a crash between transform and outcome leaves evidence that
   // an attempt was in flight. It does not make the pair atomic — nothing can — which is why the
   // transforms are also written to tolerate re-application. See `state/migrations.ts`.
-  await recordAttempt(store, authorization.nonce, {
+  await recordAttempt(store, journalKey, {
     fromDigest: authorization.fromDigest,
     toDigest: authorization.toDigest,
   });
@@ -151,10 +157,10 @@ export async function migrate(
   // — 4. Only now, touch data. —
   try {
     const outcome = await migrateProfiles(store);
-    await recordOutcome(store, authorization.nonce, 'complete');
+    await recordOutcome(store, journalKey, 'complete');
 
     log('migrate_complete', {
-      nonce: authorization.nonce.toString(),
+      authorization: journalKey,
       from_schema: outcome.fromSchema,
       to_schema: outcome.toSchema,
       changed: outcome.changed,
@@ -169,13 +175,21 @@ export async function migrate(
       idempotentReplay: false,
     };
   } catch (err) {
-    await recordOutcome(store, authorization.nonce, 'failed');
-    return failed(`migration failed: ${(err as Error).message}`);
+    await recordOutcome(store, journalKey, 'failed');
+    // The message comes from developer-written transform code and may contain holder records or a
+    // filesystem path. It is returned to the orchestrator, which needs it, but only the error
+    // *class* is logged — `public_logs` defaults to true and the field-name check cannot inspect
+    // free text.
+    return failed(`migration failed: ${(err as Error).message}`, (err as Error).name);
   }
 }
 
-function failed(detail: string): MigrateResult {
-  log('migrate_failed', {detail});
+/**
+ * @param detail returned to the caller; may quote an underlying error
+ * @param reason a stable, log-safe label. Never interpolate a caught message into a logged field.
+ */
+function failed(detail: string, reason = 'rejected'): MigrateResult {
+  log('migrate_failed', {reason});
   return {status: 'failed', detail, idempotentReplay: false};
 }
 

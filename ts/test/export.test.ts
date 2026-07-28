@@ -123,7 +123,7 @@ function authorizationFor(
     instanceId: toBytes32(INSTANCE_ID),
     recipientPublicKey: `0x${recipientPublicKey}` as Hex,
     nonce: 1n,
-    expiry: 4_000_000_000n,
+    expiry: 1_600n,  // now (1_000) + 600s, inside MAX_AUTHORIZATION_LIFETIME_SECONDS
     ...overrides,
   };
 }

@@ -124,6 +124,7 @@ export function assertExportAuthorizationMatches(
   if (now > authorization.expiry) {
     throw new AuthorizationExpiredError(authorization.expiry, now);
   }
+  assertLifetimeIsBounded(authorization.expiry, now);
   assertFieldEquals('instanceId', expectedInstanceId, authorization.instanceId);
 }
 
@@ -156,6 +157,38 @@ export function hashMigrationAuthorization(
     primaryType: 'MigrationAuthorization',
     message: authorization,
   });
+}
+
+/**
+ * The longest an authorization may claim to be valid for.
+ *
+ * A signature is a bearer capability for as long as it is valid, and the party holding it is the
+ * orchestrator — the component spec §2.8 says must become untrusted. An unbounded expiry turns one
+ * holder act into a standing permission, so the app refuses to honour one however genuinely it was
+ * signed. The holder cannot grant more than this by choosing a larger number.
+ */
+export const MAX_AUTHORIZATION_LIFETIME_SECONDS = 3600n;
+
+/** The authorization claims a validity window longer than the app will honour. */
+export class AuthorizationLifetimeTooLongError extends Error {
+  readonly expiry: bigint;
+  readonly maximum: bigint;
+
+  constructor(expiry: bigint, maximum: bigint) {
+    super(
+      `authorization is valid until ${expiry}, more than ${maximum}s ahead; refusing to honour a ` +
+        'window this long — see MAX_AUTHORIZATION_LIFETIME_SECONDS',
+    );
+    this.name = 'AuthorizationLifetimeTooLongError';
+    this.expiry = expiry;
+    this.maximum = maximum;
+  }
+}
+
+function assertLifetimeIsBounded(expiry: bigint, now: bigint): void {
+  if (expiry > now + MAX_AUTHORIZATION_LIFETIME_SECONDS) {
+    throw new AuthorizationLifetimeTooLongError(expiry, MAX_AUTHORIZATION_LIFETIME_SECONDS);
+  }
 }
 
 /** The authorization does not describe the situation it was presented in. */
@@ -236,6 +269,7 @@ export function assertAuthorizationMatches(
   if (now > authorization.expiry) {
     throw new AuthorizationExpiredError(authorization.expiry, now);
   }
+  assertLifetimeIsBounded(authorization.expiry, now);
   assertFieldEquals('toDigest', expected.runningComposeHash, authorization.toDigest);
   assertFieldEquals('instanceId', expected.instanceId, authorization.instanceId);
   if (expected.previousComposeHash !== null) {

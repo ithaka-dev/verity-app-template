@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix ts || npm install --prefix ts
+      - run: npm --prefix ts run typecheck
+      - run: npm --prefix ts test
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e 'py[dev]'
+      - run: python -m pytest py
+      - run: python -m ruff check py
+      - run: python -m mypy py/verity_app
+
+  # The two implementations must not drift, and until this job existed nothing enforced it: only the
+  # Python suite read `test-vectors/parity.json`, which made TypeScript the oracle. A review proved
+  # the gap by breaking the HKDF binding in `ts/src/seal.ts` — both suites stayed green while the two
+  # languages produced mutually unopenable export bundles.
+  #
+  # Both suites now assert against the committed vectors, and this job additionally regenerates them
+  # and requires no diff, so a deliberate wire-contract change has to be committed as one.
+  parity:
+    name: parity vectors are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix ts || npm install --prefix ts
+      - name: regenerate and compare
+        run: |
+          node --experimental-strip-types ts/scripts/emit-vectors.ts > /tmp/parity.json
+          python3 scripts/compare-vectors.py test-vectors/parity.json /tmp/parity.json

@@ -45,6 +45,29 @@ import {
 /** Wire format identifier. Present so a future construction is distinguishable, not guessed at. */
 export const BUNDLE_VERSION = 'verity-export-v1' as const;
 
+/**
+ * RFC 7748 §6.1 — points whose shared secret is degenerate.
+ *
+ * Node performs no point validation on import, so one of these parses cleanly and then fails inside
+ * the ECDH with a raw OpenSSL string that reaches the holder through `export failed: …`. Rejected
+ * here, where the message can say what is actually wrong. Python rejects the same set; a difference
+ * would mean one implementation seals what the other refuses.
+ */
+const SMALL_ORDER_POINTS: ReadonlySet<string> = new Set([
+  '0000000000000000000000000000000000000000000000000000000000000000',
+  '0100000000000000000000000000000000000000000000000000000000000000',
+  'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800',
+  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157',
+  'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'cdeb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880',
+  '4c9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7',
+  'd9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  'daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  'dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+]);
+
 export interface SealedBundle {
   readonly version: typeof BUNDLE_VERSION;
   /** Ephemeral X25519 public key, hex. The recipient needs it to derive the same secret. */
@@ -89,6 +112,12 @@ export function parseRecipientKey(hex: string): KeyObject {
   if (raw.length !== 64 || !/^[0-9a-f]+$/i.test(raw)) {
     throw new SealError(
       `recipient public key must be 32 bytes of hex (X25519), got ${raw.length} characters`,
+    );
+  }
+  if (SMALL_ORDER_POINTS.has(raw.toLowerCase())) {
+    throw new SealError(
+      'recipient public key is a small-order X25519 point; the shared secret would be ' +
+        'predictable, so nothing will be sealed to it',
     );
   }
   // SPKI prefix for X25519, so Node accepts a raw key without the caller having to wrap it.
@@ -156,14 +185,22 @@ export function open(
     throw new SealError(`unsupported bundle version ${String(bundle.version)}`);
   }
 
-  const spki = Buffer.concat([
-    Buffer.from('302a300506032b656e032100', 'hex'),
-    Buffer.from(bundle.ephemeralPublicKey, 'hex'),
-  ]);
-  const ephemeralPublic = createPublicKey({key: spki, format: 'der', type: 'spki'});
-  const shared = diffieHellman({privateKey: recipientPrivateKey, publicKey: ephemeralPublic});
+  let shared: Buffer;
+  let iv: Buffer;
+  try {
+    const spki = Buffer.concat([
+      Buffer.from('302a300506032b656e032100', 'hex'),
+      Buffer.from(bundle.ephemeralPublicKey, 'hex'),
+    ]);
+    const ephemeralPublic = createPublicKey({key: spki, format: 'der', type: 'spki'});
+    shared = diffieHellman({privateKey: recipientPrivateKey, publicKey: ephemeralPublic});
+    iv = Buffer.from(bundle.iv, 'hex');
+  } catch (err) {
+    // One error type for everything a malformed bundle can raise. These strings reach a holder
+    // through `export failed: …`, and a raw OpenSSL message tells them nothing.
+    throw new SealError(`bundle is malformed: ${(err as Error).message}`);
+  }
 
-  const iv = Buffer.from(bundle.iv, 'hex');
   const key = deriveKey(shared, iv, context);
 
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
