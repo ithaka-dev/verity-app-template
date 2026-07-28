@@ -53,10 +53,12 @@ class NotCurrentHolderError(Exception):
         self.token_id = token_id
 
 
-def token_id_for(app_manifest: str, version: str) -> int:
-    """The ``tokenId`` for a version of an app.
+def version_id_for(app_manifest: str, version: str) -> int:
+    """The identifier of a *version* of an app. Groups licences; **is not one**.
 
-    Mirrors ``LicenseToken.tokenIdFor`` exactly:
+    Nothing is ever minted against it and a balance of it means nothing — that is the whole of
+    ADR 0023. Use it to ask "which version is this licence for", never "does this address own this
+    instance". Mirrors ``LicenseToken.versionIdFor`` exactly:
     ``keccak256(abi.encode(manifest, keccak256(bytes(version))))``.
 
     ``abi.encode``, never ``encodePacked``. Packed encoding is injective here — a fixed-width
@@ -73,13 +75,20 @@ def token_id_for(app_manifest: str, version: str) -> int:
     return int.from_bytes(keccak(encoded), "big")
 
 
-def assert_current_holder(web3: Any, license_token: str, signer: str, token_id: int) -> int:
-    """Assert ``signer`` currently holds ``token_id``. Returns the balance.
+def assert_holds_license(web3: Any, license_token: str, signer: str, license_id: int) -> None:
+    """Assert ``signer`` currently holds **this specific licence**.
 
-    :raises NotCurrentHolderError: when the balance is zero
+    An earlier version checked a *version*-derived id. Licences were fungible per version, so that
+    established only that the signer was a customer of this app version — and any customer could
+    then act on any other customer's instance. Licences are per-unit now (ADR 0023), so the balance
+    is 1 or 0 and the question is ownership.
+
+    ``license_id`` must come from the signed authorization, never be derived from a version. The
+    caller must separately check it is the licence *this instance* serves.
+
+    :raises NotCurrentHolderError: when the signer does not hold that licence
     """
     contract = web3.eth.contract(address=to_checksum_address(license_token), abi=BALANCE_OF_ABI)
-    balance: int = contract.functions.balanceOf(to_checksum_address(signer), token_id).call()
+    balance: int = contract.functions.balanceOf(to_checksum_address(signer), license_id).call()
     if balance == 0:
-        raise NotCurrentHolderError(signer, token_id)
-    return balance
+        raise NotCurrentHolderError(signer, license_id)

@@ -25,7 +25,7 @@ import type {Address, Hex} from 'viem';
 
 import {hashExportAuthorization, hashMigrationAuthorization} from '../src/authorization.ts';
 import {fingerprint, type FingerprintDomain} from '../src/logging.ts';
-import {tokenIdFor} from '../src/holder.ts';
+import {versionIdFor} from '../src/holder.ts';
 import {open, type SealedBundle} from '../src/seal.ts';
 
 interface Parity {
@@ -42,7 +42,7 @@ interface Parity {
     readonly plaintext: string;
     readonly bundle: SealedBundle;
   };
-  readonly tokenIds: ReadonlyArray<{appManifest: Address; version: string; tokenId: string}>;
+  readonly versionIds: ReadonlyArray<{appManifest: Address; version: string; versionId: string}>;
 }
 
 const VECTORS = JSON.parse(
@@ -92,9 +92,9 @@ test('fingerprints match the committed vectors', () => {
   }
 });
 
-test('token ids match the committed vectors', () => {
-  for (const vector of VECTORS.tokenIds) {
-    assert.equal(tokenIdFor(vector.appManifest, vector.version), BigInt(vector.tokenId));
+test('version ids match the committed vectors', () => {
+  for (const vector of VECTORS.versionIds) {
+    assert.equal(versionIdFor(vector.appManifest, vector.version), BigInt(vector.versionId));
   }
 });
 

@@ -58,16 +58,15 @@ const BALANCE_OF_ABI = [
 ] as const;
 
 /**
- * The `tokenId` for a version of an app.
+ * The identifier of a *version* of an app. Groups licences; **is not one**.
  *
- * Mirrors `LicenseToken.tokenIdFor` exactly: `keccak256(abi.encode(manifest, keccak256(version)))`.
- * `abi.encode`, never `encodePacked` — packed encoding of a dynamic type lets two different
- * `(manifest, version)` pairs collide, and a collision means one app's licence entitles a holder to
- * run another's.
+ * Mirrors `LicenseToken.versionIdFor`. Nothing is ever minted against it, and a balance of it means
+ * nothing — that is the whole of ADR 0023. Use it to ask "which version is this licence for", never
+ * to ask "does this address own this instance".
  *
  * Kept in sync with the contract by a shared test vector rather than by attention.
  */
-export function tokenIdFor(appManifest: Address, version: string): bigint {
+export function versionIdFor(appManifest: Address, version: string): bigint {
   const versionHash = keccak256(new TextEncoder().encode(version));
   const encoded = encodeAbiParameters(parseAbiParameters('address, bytes32'), [
     appManifest,
@@ -89,45 +88,67 @@ export function createChainClient(config: AppConfig): PublicClient {
 }
 
 /**
- * Assert `signer` currently holds the licence for this app and version.
+ * Assert `signer` currently holds **this specific licence**.
  *
- * @throws {NotCurrentHolderError} when the signer's balance is zero
+ * ## The question this asks, and the one it used to ask
+ *
+ * An earlier version checked `balanceOf(signer, versionIdFor(manifest, version))`. Licences were
+ * fungible per version, so that established only that the signer was **a customer of this app
+ * version** — and any customer could then act on any other customer's instance. A reviewer
+ * demonstrated it end to end: buy your own licence at list price, sign an authorization naming
+ * somebody else's instance, and the enclave sealed their data to your key. Every check passed.
+ *
+ * Licences are now per-unit (ADR 0023), so `balanceOf(signer, licenseId)` is 1 or 0 and answers
+ * ownership of one entitlement. **`licenseId` must come from the signed authorization**, and the
+ * caller must separately check it is the licence this instance serves — holding *a* licence is
+ * still not the same as holding *this instance's* licence.
+ *
+ * @throws {NotCurrentHolderError} when the signer does not hold that licence
  */
-export async function assertCurrentHolder(options: {
+export async function assertHoldsLicense(options: {
   readonly client: PublicClient;
   readonly config: AppConfig;
   readonly signer: Address;
-  /** Defaults to this app's own version; pass explicitly when checking the source of a migration. */
-  readonly version?: string;
-}): Promise<bigint> {
-  const {client, config, signer} = options;
-  const tokenId = tokenIdFor(config.appManifest, options.version ?? config.version);
+  /** From the signed authorization. Never derived from a version. */
+  readonly licenseId: bigint;
+}): Promise<void> {
+  const {client, config, signer, licenseId} = options;
 
   const balance = await client.readContract({
     address: config.licenseToken,
     abi: BALANCE_OF_ABI,
     functionName: 'balanceOf',
-    args: [signer, tokenId],
-  });
-
-  if (balance === 0n) throw new NotCurrentHolderError(signer, tokenId);
-  return balance;
-}
-
-/** Convenience for callers holding a `licenseId` directly rather than a version. */
-export async function holdsLicense(
-  client: PublicClient,
-  licenseToken: Address,
-  signer: Address,
-  licenseId: bigint,
-): Promise<boolean> {
-  const balance = await client.readContract({
-    address: licenseToken,
-    abi: BALANCE_OF_ABI,
-    functionName: 'balanceOf',
     args: [signer, licenseId],
   });
-  return balance > 0n;
+
+  if (balance === 0n) throw new NotCurrentHolderError(signer, licenseId);
+}
+
+/** The licence this instance was provisioned for, and the failure when one is not yet bound. */
+export class InstanceNotBoundError extends Error {
+  constructor() {
+    super(
+      'this instance is not bound to a licence yet, so it cannot tell whose data it holds; ' +
+        'the first accepted authorization binds it',
+    );
+    this.name = 'InstanceNotBoundError';
+  }
+}
+
+/** The authorization names a licence other than the one this instance serves. */
+export class WrongInstanceLicenseError extends Error {
+  readonly bound: bigint;
+  readonly presented: bigint;
+
+  constructor(bound: bigint, presented: bigint) {
+    super(
+      `this instance serves licence ${bound}, not ${presented}. Holding a licence for this app is ` +
+        'not the same as holding the one this instance runs under.',
+    );
+    this.name = 'WrongInstanceLicenseError';
+    this.bound = bound;
+    this.presented = presented;
+  }
 }
 
 export type {Hex};

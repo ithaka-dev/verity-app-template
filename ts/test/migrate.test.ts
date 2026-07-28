@@ -15,7 +15,6 @@ import {
 import type {AppConfig} from '../src/config.ts';
 import type {GuestAgent} from '../src/guest-agent.ts';
 import {migrate, toBytes32} from '../src/handlers/migrate.ts';
-import {tokenIdFor} from '../src/holder.ts';
 import {recordBootComposeHash} from '../src/state/boot-record.ts';
 import {PROFILES_DOCUMENT} from '../src/state/migrations.ts';
 import {JsonStore} from '../src/state/store.ts';
@@ -61,7 +60,7 @@ async function freshStore(): Promise<JsonStore> {
 
 function authorizationFor(overrides: Partial<MigrationAuthorization> = {}): MigrationAuthorization {
   return {
-    licenseId: tokenIdFor(CONFIG.appManifest, CONFIG.version),
+    licenseId: 4242n, // a licence id, not a version id — see ADR 0023
     fromDigest: PREVIOUS_COMPOSE,
     toDigest: RUNNING_COMPOSE,
     instanceId: toBytes32(INSTANCE_ID),

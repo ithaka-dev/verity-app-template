@@ -59,17 +59,17 @@
     "plaintext": "the holder’s data, sealed in the enclave",
     "bundle": {
       "version": "verity-export-v1",
-      "ephemeralPublicKey": "9ef0d0843fb895bc89d9b22ae5b6c93a1b5bd31520400b464c47e13e37c03716",
-      "iv": "b7e3553f5d60178d10532b2f",
-      "ciphertext": "TXuixMi51g3FzEtRo7V6ghrYIcjMKwUZOkHiAxq/fSVojCf9rAM2LanA",
-      "tag": "749de05032284da39abf1479d427c221"
+      "ephemeralPublicKey": "0cdde3512755e3d2c9b35905e1ef1144c74ef50fd4b9b19c502e122a8f14db56",
+      "iv": "a697d520b2db166f0028350f",
+      "ciphertext": "35WMCArpSolw28j5rLipyPfvi/YFjROyrJednwCpK+BxLbSaPlXfoQHv",
+      "tag": "87598433256ed9d1fd2de44636856484"
     }
   },
-  "tokenIds": [
+  "versionIds": [
     {
       "appManifest": "0x1111111111111111111111111111111111111111",
       "version": "1.0.0",
-      "tokenId": "0x75b0a7c5fb3715c9c71eaa6f7900b8caf8b78df1f5699f7a42838734e63b3b35"
+      "versionId": "0x75b0a7c5fb3715c9c71eaa6f7900b8caf8b78df1f5699f7a42838734e63b3b35"
     }
   ]
 }

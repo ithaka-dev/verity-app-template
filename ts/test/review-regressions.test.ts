@@ -241,3 +241,58 @@ test('a different authorization reusing a nonce is not skipped', async () => {
   const different = await run({...base, fromDigest: `0x${'22'.repeat(32)}`});
   assert.equal(different.idempotentReplay, false, 'a different authorization must not short-circuit');
 });
+
+// — C1 (ADR 0023): a customer of the version is not the owner of the instance —
+
+/**
+ * The attack the reviewer demonstrated end to end: Mallory buys her own licence for the same app at
+ * list price, signs an authorization naming Alice's instance, and the enclave seals Alice's state to
+ * Mallory's key. Every check passed, and the log line read `export_complete`.
+ *
+ * It worked because the holder check asked `balanceOf(signer, versionId)` — *"is this address a
+ * customer of this version?"* — and licences were fungible per version, so Mallory's own licence
+ * satisfied it. Two things close it: per-unit licence ids (ADR 0023), so the balance question is
+ * about one entitlement; and the instance binding below, because owning *a* licence is still not
+ * owning *this instance's* licence.
+ */
+test('a holder of another licence cannot act on this instance', async () => {
+  const store = new JsonStore(await mkdtemp(join(tmpdir(), 'verity-c1-')));
+  await store.write(PROFILES_DOCUMENT, {
+    schemaVersion: 2,
+    data: {profiles: [{id: 'a', givenName: 'Alice', familyName: 'Secret'}]},
+  });
+
+  const ALICE_LICENCE = 1111n;
+  const MALLORY_LICENCE = 2222n;
+  const {publicKeyHex} = generateRecipientKeypair();
+
+  const attempt = async (licenseId: bigint) => {
+    const authorization: ExportAuthorization = {
+      licenseId,
+      instanceId: toBytes32(RAW_INSTANCE_ID),
+      recipientPublicKey: `0x${publicKeyHex}` as Hex,
+      nonce: licenseId,
+      expiry: 1_600n,
+    };
+    const signature = await HOLDER.signTypedData({
+      domain: migrationDomain(CONFIG.chainId, CONFIG.licenseToken),
+      types: EXPORT_AUTHORIZATION_TYPES,
+      primaryType: 'ExportAuthorization',
+      message: authorization,
+    });
+    return exportState(
+      {authorization, signature, signer: HOLDER.address},
+      {config: CONFIG, client: client(), guestAgent: guestAgent(), store, now: () => 1_000n},
+    );
+  };
+
+  // Alice's export binds the instance to her licence.
+  const alice = await attempt(ALICE_LICENCE);
+  assert.equal(alice.status, 'complete');
+
+  // Mallory holds a real licence for this app — `client()` reports a balance of 1 for any id, which
+  // is precisely the "she is a paying customer" situation — and names her own.
+  const mallory = await attempt(MALLORY_LICENCE);
+  assert.equal(mallory.status, 'failed', 'another licence must not reach this instance');
+  assert.equal(mallory.bundle, undefined, 'no bundle may be produced');
+});

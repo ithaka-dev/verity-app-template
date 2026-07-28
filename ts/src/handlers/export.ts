@@ -48,11 +48,12 @@ import {
 } from '../authorization.ts';
 import type {AppConfig} from '../config.ts';
 import type {GuestAgent} from '../guest-agent.ts';
-import {assertCurrentHolder} from '../holder.ts';
+import {WrongInstanceLicenseError, assertHoldsLicense} from '../holder.ts';
 import {fingerprint, log} from '../logging.ts';
 import {parseRecipientKey, seal, type SealedBundle} from '../seal.ts';
 import {verifyExportSignature} from '../signature.ts';
 import {PROFILES_DOCUMENT} from '../state/migrations.ts';
+import {bindLicenseId, readBoundLicenseId} from '../state/boot-record.ts';
 import type {JsonStore} from '../state/store.ts';
 import {readJournal, recordAttempt, recordOutcome} from './journal.ts';
 import {toBytes32} from './migrate.ts';
@@ -133,7 +134,17 @@ export async function exportState(
 
   // — 3. Does the signer hold the licence *now*? —
   try {
-    await assertCurrentHolder({client, config, signer});
+    await assertHoldsLicense({client, config, signer, licenseId: authorization.licenseId});
+
+    // Ownership of *a* licence is not ownership of *this instance's* licence. The chain cannot
+    // answer which of several identical instances a licence backs, so the binding lives on the
+    // volume and the first accepted authorization sets it (ADR 0023).
+    const bound = await readBoundLicenseId(store);
+    if (bound === null) {
+      await bindLicenseId(store, authorization.licenseId);
+    } else if (bound !== authorization.licenseId) {
+      throw new WrongInstanceLicenseError(bound, authorization.licenseId);
+    }
   } catch (err) {
     return failed(`holder check failed: ${(err as Error).message}`);
   }

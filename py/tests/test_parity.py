@@ -26,7 +26,7 @@ from verity_app.authorization import (
     hash_export_authorization,
     hash_migration_authorization,
 )
-from verity_app.holder import token_id_for
+from verity_app.holder import version_id_for
 from verity_app.logging import fingerprint
 from verity_app.seal import SealContext, SealedBundle, open_bundle
 
@@ -85,10 +85,10 @@ def test_fingerprints_match_typescript(vector: dict[str, str]) -> None:
 
 
 @pytest.mark.parametrize("vector", TOKEN_IDS["vectors"])
-def test_token_ids_match_solidity(vector: dict[str, str]) -> None:
-    """These came from ``LicenseToken.tokenIdFor`` and were asserted against the deployed bytecode,
-    so this pins Python to Solidity rather than to TypeScript."""
-    assert token_id_for(vector["appManifest"], vector["version"]) == int(vector["tokenId"], 16)
+def test_version_ids_match_solidity(vector: dict[str, str]) -> None:
+    """These came from ``LicenseToken.versionIdFor`` and were asserted against the deployed
+    bytecode, so this pins Python to Solidity rather than to TypeScript."""
+    assert version_id_for(vector["appManifest"], vector["version"]) == int(vector["tokenId"], 16)
 
 
 def test_python_opens_a_bundle_sealed_by_typescript() -> None:

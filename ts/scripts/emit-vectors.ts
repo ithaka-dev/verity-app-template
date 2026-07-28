@@ -14,7 +14,7 @@ import {createPrivateKey, createPublicKey} from 'node:crypto';
 import type {Address, Hex} from 'viem';
 
 import {hashExportAuthorization, hashMigrationAuthorization} from '../src/authorization.ts';
-import {tokenIdFor} from '../src/holder.ts';
+import {versionIdFor} from '../src/holder.ts';
 import {fingerprint} from '../src/logging.ts';
 import {seal} from '../src/seal.ts';
 
@@ -117,11 +117,11 @@ const document = {
     plaintext: SEAL_PLAINTEXT,
     bundle: sealedBundle,
   },
-  tokenIds: [
+  versionIds: [
     {
       appManifest,
       version: '1.0.0',
-      tokenId: `0x${tokenIdFor(appManifest, '1.0.0').toString(16).padStart(64, '0')}`,
+      versionId: `0x${versionIdFor(appManifest, '1.0.0').toString(16).padStart(64, '0')}`,
     },
   ],
 };
