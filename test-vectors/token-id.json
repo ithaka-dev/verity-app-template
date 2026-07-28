@@ -1,0 +1,23 @@
+{
+  "description": "tokenId = keccak256(abi.encode(appManifest, keccak256(bytes(version)))). Every language binding must reproduce these exactly.",
+  "source": "Generated from verity-contracts LicenseToken.tokenIdFor and asserted against the deployed bytecode, not hand-computed. If a value here disagrees with the contract, the contract is right and this file is a bug.",
+  "why": "TypeScript and Python must not drift from each other or from Solidity. A tokenId mismatch does not fail loudly — it produces a balanceOf lookup against an id nobody holds, so the app reports the holder as unauthorized and the real cause is three layers away.",
+  "vectors": [
+    {
+      "appManifest": "0x1111111111111111111111111111111111111111",
+      "version": "1.0.0",
+      "tokenId": "0x75b0a7c5fb3715c9c71eaa6f7900b8caf8b78df1f5699f7a42838734e63b3b35"
+    },
+    {
+      "appManifest": "0x2222222222222222222222222222222222222222",
+      "version": "2.3.4-rc.1",
+      "tokenId": "0x275a06c57f3fed78ffd6a86e957829d16834e6a005437d73b837f907c394a50e"
+    },
+    {
+      "note": "Degenerate inputs are included on purpose: an implementation that special-cases empty strings or the zero address diverges here rather than in production.",
+      "appManifest": "0x0000000000000000000000000000000000000000",
+      "version": "",
+      "tokenId": "0x88d4843af302c2093286898cd34cba7a471c3cdce4c78514fc971c3c6a53891e"
+    }
+  ]
+}
