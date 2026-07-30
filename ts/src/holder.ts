@@ -44,7 +44,7 @@ export class NotCurrentHolderError extends Error {
   }
 }
 
-const BALANCE_OF_ABI = [
+const LICENSE_TOKEN_ABI = [
   {
     type: 'function',
     name: 'balanceOf',
@@ -54,6 +54,13 @@ const BALANCE_OF_ABI = [
       {name: 'id', type: 'uint256'},
     ],
     outputs: [{name: '', type: 'uint256'}],
+  },
+  {
+    type: 'function',
+    name: 'instanceOf',
+    stateMutability: 'view',
+    inputs: [{name: 'licenseId', type: 'uint256'}],
+    outputs: [{name: '', type: 'bytes32'}],
   },
 ] as const;
 
@@ -116,7 +123,7 @@ export async function assertHoldsLicense(options: {
 
   const balance = await client.readContract({
     address: config.licenseToken,
-    abi: BALANCE_OF_ABI,
+    abi: LICENSE_TOKEN_ABI,
     functionName: 'balanceOf',
     args: [signer, licenseId],
   });
@@ -124,30 +131,79 @@ export async function assertHoldsLicense(options: {
   if (balance === 0n) throw new NotCurrentHolderError(signer, licenseId);
 }
 
-/** The licence this instance was provisioned for, and the failure when one is not yet bound. */
+/** The licence has not been bound to any instance, so it cannot say which one is its own. */
 export class InstanceNotBoundError extends Error {
-  constructor() {
+  readonly licenseId: bigint;
+
+  constructor(licenseId: bigint) {
     super(
-      'this instance is not bound to a licence yet, so it cannot tell whose data it holds; ' +
-        'the first accepted authorization binds it',
+      `licence ${licenseId} is not bound to an instance. The holder binds it themselves with ` +
+        '`LicenseToken.bindInstance(licenseId, instanceId)` — until they do, this app cannot tell ' +
+        'whose instance it is and refuses everything.',
     );
     this.name = 'InstanceNotBoundError';
+    this.licenseId = licenseId;
+  }
+}
+
+/**
+ * Assert that `licenseId` is bound, on chain, to **this** instance.
+ *
+ * ## Why this reads from chain rather than from the volume
+ *
+ * An earlier version recorded the binding on the encrypted volume, set by the first authorization
+ * the instance accepted. That worked and had a race nobody could see: whoever got an authorization
+ * to a fresh instance first owned it, silently and permanently, with no record anywhere a holder
+ * could check.
+ *
+ * On chain the binding is the **holder's own transaction** — the orchestrator is not involved and
+ * cannot be, since it writes nothing to chain — an instance can be claimed by only one licence
+ * ever, and a holder can verify the binding before trusting the instance. The theft that remains
+ * possible is a visible event rather than an invisible one.
+ *
+ * **Both checks are required.** `assertHoldsLicense` says the signer owns the licence;
+ * this says the licence owns this instance. The first without the second lets any holder of the
+ * version act on any instance of it; the second without the first lets a stranger act on a bound
+ * one.
+ *
+ * @throws {InstanceNotBoundError} the holder has not bound the licence yet
+ * @throws {WrongInstanceLicenseError} the licence runs a different instance
+ */
+export async function assertLicenseRunsThisInstance(options: {
+  readonly client: PublicClient;
+  readonly config: AppConfig;
+  readonly licenseId: bigint;
+  /** This instance, canonicalised to the form the holder bound. */
+  readonly instanceId: Hex;
+}): Promise<void> {
+  const {client, config, licenseId, instanceId} = options;
+
+  const bound = await client.readContract({
+    address: config.licenseToken,
+    abi: LICENSE_TOKEN_ABI,
+    functionName: 'instanceOf',
+    args: [licenseId],
+  });
+
+  if (bound === `0x${'00'.repeat(32)}`) throw new InstanceNotBoundError(licenseId);
+  if (bound.toLowerCase() !== instanceId.toLowerCase()) {
+    throw new WrongInstanceLicenseError(bound, instanceId);
   }
 }
 
 /** The authorization names a licence other than the one this instance serves. */
 export class WrongInstanceLicenseError extends Error {
-  readonly bound: bigint;
-  readonly presented: bigint;
+  readonly boundInstance: Hex;
+  readonly thisInstance: Hex;
 
-  constructor(bound: bigint, presented: bigint) {
+  constructor(boundInstance: Hex, thisInstance: Hex) {
     super(
-      `this instance serves licence ${bound}, not ${presented}. Holding a licence for this app is ` +
-        'not the same as holding the one this instance runs under.',
+      `that licence runs instance ${boundInstance}, and this is ${thisInstance}. Holding a licence ` +
+        'for this app is not the same as holding the one this instance runs under.',
     );
     this.name = 'WrongInstanceLicenseError';
-    this.bound = bound;
-    this.presented = presented;
+    this.boundInstance = boundInstance;
+    this.thisInstance = thisInstance;
   }
 }
 

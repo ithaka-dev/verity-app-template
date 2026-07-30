@@ -52,8 +52,25 @@ function guestAgent(): GuestAgent {
   } as unknown as GuestAgent;
 }
 
-function client(): PublicClient {
-  return {getCode: async () => undefined, readContract: async () => 1n} as unknown as PublicClient;
+/**
+ * Answers `balanceOf` and `instanceOf` separately.
+ *
+ * `boundTo` is the licence this instance is bound to on chain — the holder's own act, per ADR 0023.
+ * A double that returned one value for every call could not distinguish "this licence runs this
+ * instance" from "this address holds a licence", which is the whole distinction under test.
+ */
+function client(options: {boundTo?: bigint} = {}): PublicClient {
+  return {
+    getCode: async () => undefined,
+    readContract: async ({functionName, args}: {functionName: string; args: readonly unknown[]}) => {
+      if (functionName !== 'instanceOf') return 1n;
+      const asked = args[0] as bigint;
+      // Bound to `boundTo` only. Any other licence gets the zero word — unbound.
+      return options.boundTo === undefined || asked === options.boundTo
+        ? toBytes32(RAW_INSTANCE_ID)
+        : `0x${'00'.repeat(32)}`;
+    },
+  } as unknown as PublicClient;
 }
 
 // — H4: the denylist matched only snake_case, i.e. almost nothing in a camelCase codebase —
@@ -266,6 +283,9 @@ test('a holder of another licence cannot act on this instance', async () => {
   const MALLORY_LICENCE = 2222n;
   const {publicKeyHex} = generateRecipientKeypair();
 
+  // Alice bound this instance to her licence, on chain, in her own transaction.
+  const chain = client({boundTo: ALICE_LICENCE});
+
   const attempt = async (licenseId: bigint) => {
     const authorization: ExportAuthorization = {
       licenseId,
@@ -282,16 +302,16 @@ test('a holder of another licence cannot act on this instance', async () => {
     });
     return exportState(
       {authorization, signature, signer: HOLDER.address},
-      {config: CONFIG, client: client(), guestAgent: guestAgent(), store, now: () => 1_000n},
+      {config: CONFIG, client: chain, guestAgent: guestAgent(), store, now: () => 1_000n},
     );
   };
 
-  // Alice's export binds the instance to her licence.
   const alice = await attempt(ALICE_LICENCE);
   assert.equal(alice.status, 'complete');
 
-  // Mallory holds a real licence for this app — `client()` reports a balance of 1 for any id, which
-  // is precisely the "she is a paying customer" situation — and names her own.
+  // Mallory holds a real licence for this app — the double reports a balance of 1 for any id, which
+  // is precisely the "she is a paying customer" situation — and names her own. It is not the one
+  // this instance is bound to.
   const mallory = await attempt(MALLORY_LICENCE);
   assert.equal(mallory.status, 'failed', 'another licence must not reach this instance');
   assert.equal(mallory.bundle, undefined, 'no bundle may be produced');

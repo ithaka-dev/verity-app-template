@@ -48,12 +48,11 @@ import {
 } from '../authorization.ts';
 import type {AppConfig} from '../config.ts';
 import type {GuestAgent} from '../guest-agent.ts';
-import {WrongInstanceLicenseError, assertHoldsLicense} from '../holder.ts';
+import {assertHoldsLicense, assertLicenseRunsThisInstance} from '../holder.ts';
 import {fingerprint, log} from '../logging.ts';
 import {parseRecipientKey, seal, type SealedBundle} from '../seal.ts';
 import {verifyExportSignature} from '../signature.ts';
 import {PROFILES_DOCUMENT} from '../state/migrations.ts';
-import {bindLicenseId, readBoundLicenseId} from '../state/boot-record.ts';
 import type {JsonStore} from '../state/store.ts';
 import {readJournal, recordAttempt, recordOutcome} from './journal.ts';
 import {toBytes32} from './migrate.ts';
@@ -136,15 +135,16 @@ export async function exportState(
   try {
     await assertHoldsLicense({client, config, signer, licenseId: authorization.licenseId});
 
-    // Ownership of *a* licence is not ownership of *this instance's* licence. The chain cannot
-    // answer which of several identical instances a licence backs, so the binding lives on the
-    // volume and the first accepted authorization sets it (ADR 0023).
-    const bound = await readBoundLicenseId(store);
-    if (bound === null) {
-      await bindLicenseId(store, authorization.licenseId);
-    } else if (bound !== authorization.licenseId) {
-      throw new WrongInstanceLicenseError(bound, authorization.licenseId);
-    }
+    // Ownership of *a* licence is not ownership of *this instance's* licence. The holder binds the
+    // two together on chain themselves (ADR 0023) — read here rather than recorded on the volume,
+    // so there is no first-write-wins race and the holder can verify the binding before trusting
+    // the instance.
+    await assertLicenseRunsThisInstance({
+      client,
+      config,
+      licenseId: authorization.licenseId,
+      instanceId: toBytes32(info.instanceId),
+    });
   } catch (err) {
     return failed(`holder check failed: ${(err as Error).message}`);
   }

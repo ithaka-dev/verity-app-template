@@ -47,10 +47,24 @@ function fakeGuestAgent(overrides: Partial<{composeHash: string}> = {}): GuestAg
 }
 
 /** `getCode` decides EOA vs contract; `readContract` answers `balanceOf`. */
-function fakeClient(options: {balance: bigint; code?: Hex}): PublicClient {
+/**
+ * `getCode` decides EOA vs contract; `readContract` answers both `balanceOf` and `instanceOf`.
+ *
+ * Dispatching by function name rather than returning one value for everything: a double that
+ * answers every call identically cannot tell a test that asked the wrong question from one that
+ * asked the right one.
+ */
+function fakeClient(options: {
+  balance: bigint;
+  code?: Hex;
+  boundInstance?: Hex;
+}): PublicClient {
   return {
     getCode: async () => options.code,
-    readContract: async () => options.balance,
+    readContract: async ({functionName}: {functionName: string}) =>
+      functionName === 'instanceOf'
+        ? (options.boundInstance ?? toBytes32(INSTANCE_ID))
+        : options.balance,
   } as unknown as PublicClient;
 }
 

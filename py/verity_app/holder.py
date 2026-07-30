@@ -28,7 +28,7 @@ from typing import Any, Final
 from eth_abi import encode as abi_encode
 from eth_utils import keccak, to_checksum_address
 
-BALANCE_OF_ABI: Final[list[dict[str, Any]]] = [
+LICENSE_TOKEN_ABI: Final[list[dict[str, Any]]] = [
     {
         "type": "function",
         "name": "balanceOf",
@@ -38,8 +38,39 @@ BALANCE_OF_ABI: Final[list[dict[str, Any]]] = [
             {"name": "id", "type": "uint256"},
         ],
         "outputs": [{"name": "", "type": "uint256"}],
-    }
+    },
+    {
+        "type": "function",
+        "name": "instanceOf",
+        "stateMutability": "view",
+        "inputs": [{"name": "licenseId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "bytes32"}],
+    },
 ]
+
+
+class InstanceNotBoundError(Exception):
+    """The licence is not bound to any instance, so it cannot say which one is its own."""
+
+    def __init__(self, license_id: int) -> None:
+        super().__init__(
+            f"licence {license_id} is not bound to an instance. The holder binds it themselves "
+            "with `LicenseToken.bindInstance(licenseId, instanceId)` — until they do, this app "
+            "cannot tell whose instance it is and refuses everything."
+        )
+        self.license_id = license_id
+
+
+class WrongInstanceLicenseError(Exception):
+    """The licence runs a different instance than this one."""
+
+    def __init__(self, bound_instance: str, this_instance: str) -> None:
+        super().__init__(
+            f"that licence runs instance {bound_instance}, and this is {this_instance}. Holding a "
+            "licence for this app is not the same as holding the one this instance runs under."
+        )
+        self.bound_instance = bound_instance
+        self.this_instance = this_instance
 
 
 class NotCurrentHolderError(Exception):
@@ -88,7 +119,39 @@ def assert_holds_license(web3: Any, license_token: str, signer: str, license_id:
 
     :raises NotCurrentHolderError: when the signer does not hold that licence
     """
-    contract = web3.eth.contract(address=to_checksum_address(license_token), abi=BALANCE_OF_ABI)
+    contract = web3.eth.contract(address=to_checksum_address(license_token), abi=LICENSE_TOKEN_ABI)
     balance: int = contract.functions.balanceOf(to_checksum_address(signer), license_id).call()
     if balance == 0:
         raise NotCurrentHolderError(signer, license_id)
+
+
+_UNBOUND = "0x" + "00" * 32
+
+
+def assert_license_runs_this_instance(
+    web3: Any, license_token: str, license_id: int, instance_id: str
+) -> None:
+    """Assert that ``license_id`` is bound, on chain, to **this** instance.
+
+    Read from chain rather than from the volume (ADR 0024). The volume version was set by the first
+    authorization an instance accepted, which worked and had a race nobody could see: whoever
+    reached a fresh instance first owned it, silently and permanently, with no record to check.
+
+    On chain the binding is the holder's own transaction, an instance can be claimed by only one
+    licence ever, and the holder can verify it before trusting the instance.
+
+    **Both checks are required.** ``assert_holds_license`` says the signer owns the licence; this
+    says the licence owns this instance. The first without the second lets any holder of the version
+    act on any instance of it; the second without the first lets a stranger act on a bound one.
+
+    :raises InstanceNotBoundError: the holder has not bound the licence yet
+    :raises WrongInstanceLicenseError: the licence runs a different instance
+    """
+    contract = web3.eth.contract(address=to_checksum_address(license_token), abi=LICENSE_TOKEN_ABI)
+    bound: bytes = contract.functions.instanceOf(license_id).call()
+    bound_hex = "0x" + (bound.hex() if isinstance(bound, bytes) else str(bound).removeprefix("0x"))
+
+    if bound_hex.lower() == _UNBOUND:
+        raise InstanceNotBoundError(license_id)
+    if bound_hex.lower() != instance_id.lower():
+        raise WrongInstanceLicenseError(bound_hex, instance_id)
