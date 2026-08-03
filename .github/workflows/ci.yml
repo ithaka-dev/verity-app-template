@@ -17,6 +17,14 @@ jobs:
       - run: npm ci --prefix ts || npm install --prefix ts
       - run: npm --prefix ts run typecheck
       - run: npm --prefix ts test
+      # Presence, which a coverage percentage structurally cannot check: a module no test imports
+      # is *absent* from the report rather than shown at 0%, so the percentage above it is computed
+      # without it and reads as clean. Three modules sat fully untested behind a 98% that way.
+      - name: every source module appears in the coverage report
+        working-directory: ts
+        run: |
+          node --test --experimental-strip-types --experimental-test-coverage 'test/**/*.test.ts' 2>&1 \
+            | node scripts/check-coverage-completeness.mjs src
 
   python:
     name: Python
