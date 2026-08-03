@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from eth_account import Account
 from eth_account.messages import encode_typed_data
+from eth_utils.exceptions import ValidationError
 
 from verity_app.authorization import (
     EXPORT_AUTHORIZATION_FIELDS,
@@ -271,7 +272,11 @@ def test_is_contract_account_distinguishes_by_code() -> None:
 
 @pytest.mark.parametrize("signature", ["0x", "0x00", "0x" + "11" * 64])
 def test_a_malformed_signature_is_refused_rather_than_recovering_garbage(signature: str) -> None:
-    with pytest.raises(Exception):
+    """A malformed signature must not recover *some* address that then compares unequal — that
+    reports "wrong signer" for what is actually unparseable input, and the two call for different
+    responses. `eth_account` raises its own types here, so this asserts the narrower fact that
+    verification does not succeed."""
+    with pytest.raises((ValidationError, ValueError, IndexError, SignerMismatchError)):
         verify_migration_signature(
             FakeWeb3(), HOLDER.address, _migration(), CHAIN_ID, LICENSE_TOKEN, signature
         )

@@ -58,7 +58,7 @@ class _FakeEth:
         self._balances = balances
         self._bindings = bindings
 
-    def contract(self, address: str, abi: Any) -> "_FakeContract":  # noqa: ARG002
+    def contract(self, address: str, abi: Any) -> _FakeContract:
         return _FakeContract(self._balances, self._bindings)
 
 
@@ -72,10 +72,10 @@ class _FakeFunctions:
         self._balances = balances
         self._bindings = bindings
 
-    def balanceOf(self, account: str, token_id: int) -> "_Call":  # noqa: N802
+    def balanceOf(self, account: str, token_id: int) -> _Call:  # noqa: N802
         return _Call(self._balances.get((account.lower(), token_id), 0))
 
-    def instanceOf(self, license_id: int) -> "_Call":  # noqa: N802
+    def instanceOf(self, license_id: int) -> _Call:  # noqa: N802
         raw = self._bindings.get(license_id, UNBOUND)
         return _Call(bytes.fromhex(raw.removeprefix("0x")))
 
