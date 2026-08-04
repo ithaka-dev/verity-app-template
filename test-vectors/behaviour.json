@@ -1,0 +1,358 @@
+{
+  "description": "Cross-language behaviour parity: inputs paired with the outcome both implementations must produce. Not values — decisions.",
+  "why": "test-vectors/parity.json pins what the two languages compute. This pins what they *do*. The distinction is not academic: both languages produced byte-identical EIP-712 digests for an authorization expiring in the year 2100, agreed on every digest and fingerprint in parity.json, and then TypeScript refused it while Python honoured it. No value vector could have seen that, because no value differed.",
+  "authorship": "Hand-written as a specification, deliberately NOT emitted from either implementation. parity.json is emitted from TypeScript and its own header records what that cost: for a while only Python asserted against it, which made TypeScript an oracle, and an oracle cannot be wrong by construction. A behaviour table generated from one side would encode that side's bugs as the contract. Where these cases and an implementation disagree, decide which is right — do not assume it is the code.",
+  "reasons": {
+    "accept": "The operation is permitted. No error.",
+    "AuthorizationExpired": "now > expiry.",
+    "AuthorizationLifetimeTooLong": "expiry is further ahead than MAX_AUTHORIZATION_LIFETIME_SECONDS (3600).",
+    "AuthorizationMismatch:<field>": "The named field does not describe the situation the authorization was presented in."
+  },
+  "ordering": "Cases where more than one rule would fire pin *which* refusal wins. Ordering is behaviour: a language that checks the fields before the clock refuses a stale authorization with a mismatch error, which sends whoever reads the log looking for the wrong bug. Expiry, then lifetime, then fields in declaration order.",
+  "constants": {
+    "maxAuthorizationLifetimeSeconds": 3600
+  },
+  "migration": [
+    {
+      "name": "a well-formed authorization for this instance is accepted",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "accept",
+      "note": "The baseline. Without it the table could pass by refusing everything."
+    },
+    {
+      "name": "hex comparison is case-insensitive",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+        "toDigest": "0xCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCDCD",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000FF",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "accept",
+      "note": "A checksum difference is not a mismatch. A language that compared case-sensitively would refuse genuine holders depending on where the value had been through."
+    },
+    {
+      "name": "expiry exactly at now is still valid",
+      "now": 1600,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "accept",
+      "note": "The boundary. `now > expiry` and `now >= expiry` differ by one second of legitimate use, and only a case like this distinguishes them."
+    },
+    {
+      "name": "one second past expiry is refused",
+      "now": 1601,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationExpired"
+    },
+    {
+      "name": "an expiry exactly at the lifetime limit is accepted",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 4600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "accept",
+      "note": "now + 3600 exactly. The far side of the boundary below."
+    },
+    {
+      "name": "one second beyond the lifetime limit is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 4601
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationLifetimeTooLong"
+    },
+    {
+      "name": "an authorization valid until the year 2100 is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 4102444800
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationLifetimeTooLong",
+      "note": "The case that found the drift. Python honoured this; TypeScript refused it. A standing permission held by the component §2.8 says must become untrusted."
+    },
+    {
+      "name": "an authorization for a different instance is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x0000000000000000000000000000000000000000000000000000000000000099",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationMismatch:instanceId",
+      "note": "The attack instanceId exists to stop. A holder running two instances of the same version has two things matching fromDigest, so the signature alone would authorize the wrong one."
+    },
+    {
+      "name": "an authorization naming a version this instance is not running is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationMismatch:toDigest"
+    },
+    {
+      "name": "an authorization migrating from a version this instance was never on is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationMismatch:fromDigest"
+    },
+    {
+      "name": "fromDigest is not checked when the platform reports no previous version",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "toDigest": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": null,
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "accept",
+      "note": "A first deployment has nothing to compare against. Present so the null branch is a decision both languages make the same way, rather than one skipping and the other refusing."
+    },
+    {
+      "name": "expiry is checked before the fields",
+      "now": 9999,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "instanceId": "0x0000000000000000000000000000000000000000000000000000000000000099",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationExpired",
+      "note": "Everything is wrong here. The clock must win, or a stale authorization is reported as a mismatch and whoever reads the log goes looking for the wrong bug."
+    },
+    {
+      "name": "lifetime is checked before the fields",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "instanceId": "0x0000000000000000000000000000000000000000000000000000000000000099",
+        "nonce": 7,
+        "expiry": 4102444800
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationLifetimeTooLong"
+    },
+    {
+      "name": "toDigest is checked before instanceId",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "fromDigest": "0xabababababababababababababababababababababababababababababababab",
+        "toDigest": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "instanceId": "0x0000000000000000000000000000000000000000000000000000000000000099",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expected": {
+        "runningComposeHash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "previousComposeHash": "0xabababababababababababababababababababababababababababababababab",
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff"
+      },
+      "outcome": "reject",
+      "reason": "AuthorizationMismatch:toDigest"
+    }
+  ],
+  "export": [
+    {
+      "name": "a well-formed export authorization for this instance is accepted",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "recipientPublicKey": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expectedInstanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+      "outcome": "accept"
+    },
+    {
+      "name": "an expired export authorization is refused",
+      "now": 1601,
+      "authorization": {
+        "licenseId": 42,
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "recipientPublicKey": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expectedInstanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+      "outcome": "reject",
+      "reason": "AuthorizationExpired"
+    },
+    {
+      "name": "an export authorization valid until the year 2100 is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "instanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+        "recipientPublicKey": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nonce": 7,
+        "expiry": 4102444800
+      },
+      "expectedInstanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+      "outcome": "reject",
+      "reason": "AuthorizationLifetimeTooLong",
+      "note": "Export is the operation where an unbounded window is worst: the bundle is readable by whoever holds recipientPublicKey, so a standing authorization is a standing right to the holder's data."
+    },
+    {
+      "name": "an export authorization for a different instance is refused",
+      "now": 1000,
+      "authorization": {
+        "licenseId": 42,
+        "instanceId": "0x0000000000000000000000000000000000000000000000000000000000000099",
+        "recipientPublicKey": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expectedInstanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+      "outcome": "reject",
+      "reason": "AuthorizationMismatch:instanceId"
+    },
+    {
+      "name": "export expiry is checked before the instance",
+      "now": 9999,
+      "authorization": {
+        "licenseId": 42,
+        "instanceId": "0x0000000000000000000000000000000000000000000000000000000000000099",
+        "recipientPublicKey": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "nonce": 7,
+        "expiry": 1600
+      },
+      "expectedInstanceId": "0x00000000000000000000000000000000000000000000000000000000000000ff",
+      "outcome": "reject",
+      "reason": "AuthorizationExpired"
+    }
+  ]
+}

@@ -99,7 +99,8 @@ def _sign(
             "message": message,
         }
     )
-    return account.sign_message(signable).signature.to_0x_hex()
+    signature: str = account.sign_message(signable).signature.to_0x_hex()
+    return signature
 
 
 # — the happy path —

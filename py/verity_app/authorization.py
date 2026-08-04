@@ -118,6 +118,38 @@ class AuthorizationExpiredError(Exception):
         self.now = now
 
 
+MAX_AUTHORIZATION_LIFETIME_SECONDS = 3600
+"""The longest an authorization may claim to be valid for.
+
+A signature is a bearer capability for as long as it is valid, and the party holding it is the
+orchestrator — the component spec §2.8 says must become untrusted. An unbounded expiry turns one
+holder act into a standing permission, so the app refuses to honour one however genuinely it was
+signed. The holder cannot grant more than this by choosing a larger number.
+
+**This was missing here while TypeScript enforced it**, found by T-07's behavioural parity table.
+The value vectors could not see it: both languages computed identical EIP-712 digests for an
+authorization expiring in the year 2100, agreed on every byte, and then one honoured it and the
+other refused. Parity of values is not parity of behaviour.
+"""
+
+
+class AuthorizationLifetimeTooLongError(Exception):
+    """The authorization claims a validity window longer than the app will honour."""
+
+    def __init__(self, expiry: int, maximum: int) -> None:
+        super().__init__(
+            f"authorization is valid until {expiry}, more than {maximum}s ahead; refusing to "
+            "honour a window this long — see MAX_AUTHORIZATION_LIFETIME_SECONDS"
+        )
+        self.expiry = expiry
+        self.maximum = maximum
+
+
+def _assert_lifetime_is_bounded(expiry: int, now: int) -> None:
+    if expiry > now + MAX_AUTHORIZATION_LIFETIME_SECONDS:
+        raise AuthorizationLifetimeTooLongError(expiry, MAX_AUTHORIZATION_LIFETIME_SECONDS)
+
+
 class AuthorizationMismatchError(Exception):
     def __init__(self, field: str, expected: str, actual: str) -> None:
         super().__init__(
@@ -257,6 +289,7 @@ def assert_authorization_matches(
     """
     if now > authorization.expiry:
         raise AuthorizationExpiredError(authorization.expiry, now)
+    _assert_lifetime_is_bounded(authorization.expiry, now)
     _assert_equal("toDigest", expected.running_compose_hash, authorization.to_digest)
     _assert_equal("instanceId", expected.instance_id, authorization.instance_id)
     if expected.previous_compose_hash is not None:
@@ -268,6 +301,7 @@ def assert_export_authorization_matches(
 ) -> None:
     if now > authorization.expiry:
         raise AuthorizationExpiredError(authorization.expiry, now)
+    _assert_lifetime_is_bounded(authorization.expiry, now)
     _assert_equal("instanceId", expected_instance_id, authorization.instance_id)
 
 

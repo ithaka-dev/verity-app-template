@@ -49,7 +49,12 @@ def _auth(**overrides: object) -> MigrationAuthorization:
         "to_digest": FULL,
         "instance_id": "0x" + "11" * 32,
         "nonce": 1,
-        "expiry": 4_000_000_000,
+        # Was 4_000_000_000 — a validity window of roughly 127 years, which every test here ran
+        # under without anything objecting. It does now: T-07's parity table found that TypeScript
+        # bounded an authorization's lifetime and Python did not, and closing that gap made these
+        # fixtures illegal. Both tests below use `now=1`, so this sits inside
+        # MAX_AUTHORIZATION_LIFETIME_SECONDS while still being comfortably unexpired.
+        "expiry": 3_600,
     }
     base.update(overrides)
     return MigrationAuthorization(**base)  # type: ignore[arg-type]
