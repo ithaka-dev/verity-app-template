@@ -25,6 +25,17 @@ jobs:
         run: |
           node --test --experimental-strip-types --experimental-test-coverage 'test/**/*.test.ts' 2>&1 \
             | node scripts/check-coverage-completeness.mjs src
+      # T-18. A different question from the step above, and neither replaces the other: this asks
+      # whether the number slipped, that one asks whether a module is in the report at all. A floor
+      # over a number that omits a file is a floor over the wrong number.
+      #
+      # `npm --prefix ts test` runs separately above, so a failing test cannot hide behind this
+      # pipeline's exit code.
+      - name: coverage floors
+        working-directory: ts
+        run: |
+          node --test --experimental-strip-types --experimental-test-coverage 'test/**/*.test.ts' 2>&1 \
+            | node scripts/check-coverage-floor.mjs
 
   python:
     name: Python
@@ -35,7 +46,15 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -e 'py[dev]'
-      - run: python -m pytest py
+      # T-18: a floor just below current, so a regression trips it. **Raise it as coverage
+      # improves; never lower it to make a build pass** — a change that justifies a lower floor
+      # should argue for it in the commit message, where a reviewer sees it.
+      #
+      # Note the two gates are different questions. This one asks whether the *number* slipped;
+      # `check-coverage-completeness` below asks whether a module is in the report at all, which a
+      # percentage structurally cannot — a module no test imports is absent rather than red, and
+      # three of them sat untested behind a 98% that way.
+      - run: python -m pytest py --cov=verity_app --cov-fail-under=91
       - run: python -m ruff check py
       - run: python -m mypy py/verity_app
 
