@@ -31,10 +31,14 @@ jobs:
       #
       # `npm --prefix ts test` runs separately above, so a failing test cannot hide behind this
       # pipeline's exit code.
+      # `--test-coverage-exclude` because Node counts the test files themselves otherwise, and they
+      # score ~100% on themselves — a floor over a number padded by its own tests is measuring the
+      # wrong thing, and the padding grows every time someone writes a test.
       - name: coverage floors
         working-directory: ts
         run: |
-          node --test --experimental-strip-types --experimental-test-coverage 'test/**/*.test.ts' 2>&1 \
+          node --test --experimental-strip-types --experimental-test-coverage \
+            --test-coverage-exclude='test/**' 'test/**/*.test.ts' 2>&1 \
             | node scripts/check-coverage-floor.mjs
 
   python:

@@ -42,12 +42,11 @@ const report = await new Promise((resolve) => {
   process.stdin.on('end', () => resolve(buffer));
 });
 
-// The summary row Node emits, e.g.
-//   ℹ all files              |  98.77 |    94.59 |   93.10 |
-const summary = report
-  .split('\n')
-  .map((line) => line.replace(/^[ℹ\s]*/u, ''))
-  .find((line) => line.startsWith('all files'));
+// The summary row Node emits. The line prefix is **version-dependent** — Node 24 writes `ℹ`, Node
+// 22 writes `#` — so this matches the row itself rather than trying to enumerate prefixes. CI runs
+// Node 22 and found this the hard way: the gate saw no summary and refused, which is the right
+// direction to fail but for the wrong reason.
+const summary = report.split('\n').find((line) => /\ball files\s*\|/u.test(line));
 
 if (!summary) {
   // A missing summary must fail. If this returned success the gate would pass hardest at exactly
