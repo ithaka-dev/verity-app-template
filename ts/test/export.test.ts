@@ -114,8 +114,14 @@ test('each seal uses a fresh ephemeral key', () => {
   const {publicKeyHex} = generateRecipientKeypair();
   const recipient = parseRecipientKey(publicKeyHex);
   const context = {licenseId: 1n, instanceId: INSTANCE_ID};
-  const a = seal(new TextEncoder().encode('x'), recipient, context);
-  const b = seal(new TextEncoder().encode('x'), recipient, context);
+  // AES-GCM ciphertext is exactly as long as the plaintext, so a 1-byte plaintext used to make
+  // `a.ciphertext !== b.ciphertext` a coin flip over 256 outcomes rather than a real assertion —
+  // measured: two honest seals of a 1-byte plaintext collided by trial 26 of 2000. 16 bytes puts
+  // the collision space at 2^128, where "no collision in 2000 trials" is the expected outcome
+  // rather than luck.
+  const plaintext = new TextEncoder().encode('0123456789abcdef');
+  const a = seal(plaintext, recipient, context);
+  const b = seal(plaintext, recipient, context);
   assert.notEqual(a.ephemeralPublicKey, b.ephemeralPublicKey);
   assert.notEqual(a.ciphertext, b.ciphertext);
 });
