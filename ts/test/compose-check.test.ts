@@ -86,6 +86,11 @@ test('cross-checks the licensed digest', () => {
   assert.doesNotThrow(() => assertReferencesDigest(GOOD, PINNED));
   assert.doesNotThrow(() => assertReferencesDigest(GOOD, PINNED.replace('sha256:', '')));
   assert.doesNotThrow(() => assertReferencesDigest(GOOD, `0x${PINNED.replace('sha256:', '')}`));
+  // Uppercase hex is a form the check accepts, not just a form it happens to tolerate: the compose
+  // is pinned lowercase, so this only passes if the comparison is case-insensitive.
+  assert.doesNotThrow(() =>
+    assertReferencesDigest(GOOD, `sha256:${PINNED.replace('sha256:', '').toUpperCase()}`),
+  );
 });
 
 test('refuses when the licensed digest is absent from the compose', () => {

@@ -124,16 +124,34 @@ export function pinnedImages(composeDocument: Uint8Array): PinnedImage[] {
 }
 
 /**
+ * Normalise a licensed image digest to the lowercase `sha256:<64hex>` form `pinnedImages` produces.
+ *
+ * Accepts every form a caller might reasonably hold: `sha256:<64hex>`, bare `<64hex>`, or
+ * `0x<64hex>`. Exported so every place that needs to *print* the digest a check ran against shows
+ * the same value the check actually compared — a caller re-deriving this independently is exactly
+ * how a display string and a check drift.
+ *
+ * This normalises; it does not validate. Garbage in yields `sha256:garbage` out — the `0x`/`sha256:`
+ * prefix strips are themselves case-sensitive (`0X…` or `SHA256:…` pass through unstripped), so a
+ * malformed or oddly-cased prefix produces a value that then simply fails the comparison in
+ * `assertReferencesDigest` (a `digest-absent` refusal), rather than being rejected here by name.
+ */
+export function normaliseImageDigest(imageDigest: string): string {
+  const stripped = imageDigest.startsWith('0x') ? imageDigest.slice(2) : imageDigest;
+  const withPrefix = stripped.startsWith('sha256:') ? stripped : `sha256:${stripped}`;
+  return withPrefix.toLowerCase();
+}
+
+/**
  * Check the compose actually references the digest the manifest record will name.
  *
  * Gives `imageDigest` a job beyond human readability: it becomes the value the compose is checked
  * *against*, closing the loop between the two fields of a record.
  */
 export function assertReferencesDigest(composeDocument: Uint8Array, imageDigest: string): void {
-  const wanted = imageDigest.startsWith('0x') ? imageDigest.slice(2) : imageDigest;
-  const normalised = wanted.startsWith('sha256:') ? wanted : `sha256:${wanted}`;
+  const normalised = normaliseImageDigest(imageDigest);
   const images = pinnedImages(composeDocument);
-  if (!images.some((image) => image.digest.toLowerCase() === normalised.toLowerCase())) {
+  if (!images.some((image) => image.digest.toLowerCase() === normalised)) {
     throw new ComposeCheckError(
       'digest-absent',
       `compose does not reference the licensed image digest ${normalised}; it references ` +
